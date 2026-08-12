@@ -22,6 +22,8 @@ import android.os.Binder;
 import android.os.IVibratorStateListener;
 import android.os.RemoteCallbackList;
 import android.os.RemoteException;
+import android.os.SystemProperties;
+import android.os.VibrationEffect;
 import android.os.VibratorInfo;
 import android.os.vibrator.PrebakedSegment;
 import android.os.vibrator.PrimitiveSegment;
@@ -37,6 +39,17 @@ import libcore.util.NativeAllocationRegistry;
 /** Controls a single vibrator. */
 final class VibratorController {
     private static final String TAG = "VibratorController";
+
+    // Emulate prebaked effects with a plain timed pulse on vibrators that
+    // cannot vary their output. Set to false to always call the HAL's
+    // perform() instead. See emulatedPrebakedDurationMs().
+    private static final String PROP_HAPTICS_DURATION =
+            "persist.gammaos.haptics.duration_emulation";
+    // Overall scale applied to the emulated durations, in percent. Lets the
+    // whole haptic feel be tuned without a rebuild.
+    private static final String PROP_HAPTICS_SCALE = "persist.gammaos.haptics.scale";
+    // Ceiling so a misconfigured scale cannot leave the motor running.
+    private static final long MAX_EMULATED_PREBAKED_MS = 200;
 
     private final Object mLock = new Object();
 
@@ -265,14 +278,95 @@ final class VibratorController {
      */
     public long on(PrebakedSegment prebaked, long vibrationId) {
         synchronized (mLock) {
-            long duration = mNativeWrapper.perform(prebaked.getEffectId(),
-                    prebaked.getEffectStrength(), vibrationId);
+            long duration = -1;
+
+            // On a binary on/off ERM the HAL renders every prebaked effect
+            // identically: it advertises no CAP_AMPLITUDE_CONTROL and ignores
+            // the EffectStrength argument entirely (measured on the RG556 --
+            // LIGHT and STRONG both produce ~72ms pulses). That leaves the
+            // Vibration & haptics intensity settings inert even though the
+            // framework computes and passes the correct strength.
+            //
+            // Pulse length is the one dimension such a motor can actually
+            // render, so synthesise the effect from a duration instead of
+            // asking the HAL to perform it. Falls through to perform() below
+            // if this is disabled, the effect has no mapping, or the call
+            // fails, so unsupported cases keep the stock behaviour.
+            long emulatedMs = emulatedPrebakedDurationMs(prebaked);
+            if (emulatedMs > 0) {
+                duration = mNativeWrapper.on(emulatedMs, vibrationId);
+            }
+            if (duration <= 0) {
+                duration = mNativeWrapper.perform(prebaked.getEffectId(),
+                        prebaked.getEffectStrength(), vibrationId);
+            }
             if (duration > 0) {
                 mCurrentAmplitude = -1;
                 notifyListenerOnVibrating(true);
             }
             return duration;
         }
+    }
+
+    /**
+     * Duration used to emulate a prebaked effect on a vibrator that cannot vary
+     * its output, or 0 to let the HAL perform the effect itself.
+     */
+    private long emulatedPrebakedDurationMs(PrebakedSegment prebaked) {
+        if (!SystemProperties.getBoolean(PROP_HAPTICS_DURATION, true)) {
+            return 0;
+        }
+        // Hardware that can vary amplitude renders these properly already.
+        VibratorInfo info = mVibratorInfo;
+        if (info == null || info.hasCapability(IVibrator.CAP_AMPLITUDE_CONTROL)) {
+            return 0;
+        }
+
+        final int base;
+        switch (prebaked.getEffectId()) {
+            case VibrationEffect.EFFECT_TICK:
+            case VibrationEffect.EFFECT_TEXTURE_TICK:
+                base = 14;
+                break;
+            case VibrationEffect.EFFECT_CLICK:
+            case VibrationEffect.EFFECT_POP:
+                base = 25;
+                break;
+            case VibrationEffect.EFFECT_HEAVY_CLICK:
+            case VibrationEffect.EFFECT_THUD:
+                base = 40;
+                break;
+            default:
+                // EFFECT_DOUBLE_CLICK and anything else needs more than one
+                // pulse; a single on() cannot express it. Leave it to the HAL.
+                return 0;
+        }
+
+        final float strengthScale;
+        switch (prebaked.getEffectStrength()) {
+            case VibrationEffect.EFFECT_STRENGTH_LIGHT:
+                strengthScale = 0.5f;
+                break;
+            case VibrationEffect.EFFECT_STRENGTH_STRONG:
+                strengthScale = 1.7f;
+                break;
+            default:
+                strengthScale = 1f;
+                break;
+        }
+
+        int percent = SystemProperties.getInt(PROP_HAPTICS_SCALE, 100);
+        percent = Math.max(0, Math.min(400, percent));
+
+        // A scale of 0 means "weakest", not "off", and must NOT return 0 here:
+        // 0 is the "no mapping" signal that falls through to the HAL, which
+        // renders every effect at its fixed full strength. That would make the
+        // bottom of the slider the strongest setting. Turning haptics off is
+        // the job of the Vibration & haptics screen; the floor below decides
+        // what weakest feels like.
+        long ms = Math.round(base * strengthScale * percent / 100f);
+        // Below roughly 8ms the motor never spins up enough to be felt.
+        return Math.max(8, Math.min(MAX_EMULATED_PREBAKED_MS, ms));
     }
 
     /**

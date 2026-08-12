@@ -34,6 +34,11 @@ import androidx.preference.PreferenceGroup;
 import androidx.preference.PreferenceScreen;
 import androidx.preference.SwitchPreference;
 
+// Settings' own seekbar, not androidx's. The androidx one binds against
+// @id/seekbar_value, which this app's preference row layout does not contain,
+// so it NPEs in onBindViewHolder the moment the row scrolls into view.
+import com.android.settings.widget.SeekBarPreference;
+
 import com.android.settings.R;
 import com.android.settings.SettingsPreferenceFragment;
 import com.android.settings.search.BaseSearchIndexProvider;
@@ -66,6 +71,12 @@ public class GammaOSToolboxFragment extends SettingsPreferenceFragment {
     private static final Map<String, String> DEFAULTS = new HashMap<>();
     static {
         // Display
+        // Haptics. duration_emulation must default to "true" here to match
+        // VibratorController, which treats the unset property as enabled. With
+        // no entry the switch falls back to "false" and renders OFF while the
+        // feature is actually ON.
+        DEFAULTS.put("persist.gammaos.haptics.duration_emulation", "true");
+        DEFAULTS.put("persist.gammaos.haptics.scale", "100");
         DEFAULTS.put("persist.gammaos.immersive", "0");
         DEFAULTS.put("persist.gammaos.refresh.lock", "false");
         DEFAULTS.put("persist.gammaos.refresh.rate", "0");
@@ -459,6 +470,8 @@ public class GammaOSToolboxFragment extends SettingsPreferenceFragment {
 
             if (pref instanceof SwitchPreference) {
                 bindSwitch((SwitchPreference) pref, key);
+            } else if (pref instanceof SeekBarPreference) {
+                bindSeekBar((SeekBarPreference) pref, key);
             } else if (pref instanceof MultiSelectListPreference) {
                 bindMultiSelectList((MultiSelectListPreference) pref, key);
             } else if (pref instanceof ListPreference) {
@@ -604,6 +617,32 @@ public class GammaOSToolboxFragment extends SettingsPreferenceFragment {
         mp.setSummary(sb.length() > 0
                 ? sb.toString()
                 : getString(R.string.gammaos_toolbox_value_not_set));
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  SeekBarPreference  →  int property                                */
+    /* ------------------------------------------------------------------ */
+
+    private void bindSeekBar(SeekBarPreference sb, String key) {
+        int def;
+        try {
+            def = Integer.parseInt(DEFAULTS.getOrDefault(key, "0"));
+        } catch (NumberFormatException e) {
+            def = 0;
+        }
+        int current = SystemProperties.getInt(key, def);
+        // A property set outside this screen can sit outside the slider range.
+        current = Math.max(sb.getMin(), Math.min(sb.getMax(), current));
+        sb.setProgress(current);
+
+        // Tick as the bar moves. For the haptic strength slider this doubles as
+        // a live preview of the value being chosen.
+        sb.setHapticFeedbackMode(SeekBarPreference.HAPTIC_FEEDBACK_MODE_ON_TICKS);
+
+        sb.setOnPreferenceChangeListener((p, newValue) -> {
+            SystemProperties.set(key, String.valueOf((Integer) newValue));
+            return true;
+        });
     }
 
     /* ------------------------------------------------------------------ */

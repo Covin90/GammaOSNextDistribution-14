@@ -1220,6 +1220,20 @@
             android:summary="@string/gammaos_toolbox_qs_override_summary"
             android:defaultValue="" />
 
+        <com.android.settings.widget.SeekBarPreference
+            android:key="persist.gammaos.haptics.scale"
+            android:title="@string/gammaos_toolbox_haptics_scale_title"
+            android:summary="@string/gammaos_toolbox_haptics_scale_summary"
+            android:max="400"
+            android:min="0"
+            android:defaultValue="100" />
+
+        <SwitchPreference
+            android:key="persist.gammaos.haptics.duration_emulation"
+            android:title="@string/gammaos_toolbox_haptics_emulation_title"
+            android:summary="@string/gammaos_toolbox_haptics_emulation_summary"
+            android:defaultValue="true" />
+
     </PreferenceCategory>
 
     <!-- ==================== Power & Performance ==================== -->

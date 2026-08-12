@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     Settings hides the Vibration and haptics intensity sliders unless this is
+     greater than 1, falling back to a bare on/off switch. AOSP defaults it to
+     1, and on the RG556 that left no way to change haptic strength at all.
+
+     The value is clamped with Vibrator.VIBRATION_INTENSITY_HIGH, so 3 gives
+     the full Low / Medium / High slider.
+
+     Those levels reach the vibrator HAL as EffectStrength LIGHT / MEDIUM /
+     STRONG. The stock Unisoc HAL ignores that argument entirely (measured:
+     LIGHT and STRONG both produce ~72ms pulses), so the sliders only do
+     something in combination with the duration emulation added to
+     VibratorController.on(PrebakedSegment), gated by the property
+     persist.gammaos.haptics.duration_emulation. Without that patch this
+     overlay shows sliders that move but change nothing.
+
+     Settings is a normal app rather than a mainline module, so a source
+     overlay reaches it. The WiFi values needed a real RRO instead, because
+     ServiceWifiResources lives inside the com.android.wifi APEX.
+-->
+<resources>
+    <integer name="config_vibration_supported_intensity_levels">3</integer>
+</resources>

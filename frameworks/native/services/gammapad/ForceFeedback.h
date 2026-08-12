@@ -70,6 +70,9 @@ private:
 
     bool mPwmEnabled;
     int mPwmIntensity;  // 0-255
+    // True when intensity is rendered as pulse length rather than duty cycle.
+    // Mirrors persist.gammaos.gamepad.rumble_mode, which the bridge reads too.
+    bool mDurationMode;
     int mBridgeFd;
 
     // Direct FF state

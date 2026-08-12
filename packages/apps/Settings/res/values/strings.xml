@@ -13540,6 +13540,10 @@
     <!-- GammaOS Toolbox: QS extended -->
     <string name="gammaos_toolbox_qs_override_title">QS default tiles override</string>
     <string name="gammaos_toolbox_qs_override_summary">Override the default Quick Settings tile layout. Comma-separated tile class names.</string>
+    <string name="gammaos_toolbox_haptics_scale_title">Haptic strength</string>
+    <string name="gammaos_toolbox_haptics_scale_summary">Scales the length of system haptic pulses (home button, keyboard, taps), as a percentage. 100 is normal, lower is subtler, higher is firmer. Range 0–400. Finer than the four-step slider in Vibration &amp; haptics, and applies on top of it.</string>
+    <string name="gammaos_toolbox_haptics_emulation_title">Duration-based haptics</string>
+    <string name="gammaos_toolbox_haptics_emulation_summary">Render system haptic effects as timed pulses instead of asking the vibrator HAL to perform them. Required for haptic strength to have any effect on this hardware, since the motor cannot vary its amplitude. Turn off to restore stock behaviour.</string>
 
     <!-- GammaOS Toolbox: BFI mode entries -->
     <string name="gammaos_toolbox_bfi_mode_ctm">CTM (Hardware)</string>

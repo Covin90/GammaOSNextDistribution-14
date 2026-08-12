@@ -21,6 +21,17 @@
 namespace gammapad {
 
 static constexpr const char* BRIDGE_SOCKET_NAME = "gammapad_vibrate";
+
+// Scale a 0-65535 FF magnitude by the 0-255 intensity setting, never returning
+// zero for a non-zero input. Intensity 0 is the weakest usable rumble, not
+// silence; the Enable rumble switch (pwm_enable) is what turns rumble off.
+// What "weakest" actually feels like is decided downstream by the pulse-length
+// floors, MIN_DIRECT_PULSE_MS here and MIN_PULSE_MS in the bridge.
+static uint16_t scaleMagnitude(uint16_t magnitude, int intensity) {
+    if (magnitude == 0) return 0;
+    uint32_t scaled = (static_cast<uint32_t>(magnitude) * intensity) / 255;
+    return static_cast<uint16_t>(scaled == 0 ? 1 : scaled);
+}
 static constexpr int MAX_EFFECTS = 16;
 
 // Resolve a device name (e.g. "sc27xx:vibrator") to its /dev/input/eventN path
@@ -55,6 +66,7 @@ static std::string resolveFFDevicePath(const std::string& nameOrPath) {
 ForceFeedback::ForceFeedback()
     : mPwmEnabled(true),
       mPwmIntensity(255),
+      mDurationMode(true),
       mBridgeFd(-1),
       mDirectFFfd(-1),
       mDirectFFEffectId(-1) {
@@ -73,6 +85,8 @@ void ForceFeedback::loadConfig() {
     mPwmIntensity = GetIntProperty("persist.gammaos.gamepad.pwm_intensity", 255);
     if (mPwmIntensity < 0) mPwmIntensity = 0;
     if (mPwmIntensity > 255) mPwmIntensity = 255;
+    mDurationMode =
+            GetProperty("persist.gammaos.gamepad.rumble_mode", "duration") != "pwm";
 
     std::string ffDevice = GetProperty("persist.gammaos.gamepad.ff_vibrate_device", "");
     std::string newPath = resolveFFDevicePath(ffDevice);
@@ -294,12 +308,20 @@ void ForceFeedback::sendPwmVibration(uint16_t strong, uint16_t weak,
     }
 
     // Scale magnitudes (0-65535) by intensity (0-255) to get bridge value (0-65535)
-    strong = static_cast<uint16_t>((static_cast<uint32_t>(strong) * mPwmIntensity) / 255);
-    weak = static_cast<uint16_t>((static_cast<uint32_t>(weak) * mPwmIntensity) / 255);
+    strong = scaleMagnitude(strong, mPwmIntensity);
+    weak = scaleMagnitude(weak, mPwmIntensity);
 
-    // Enforce minimum vibration floor so PWM motors actually move
-    if (strong > 0 && strong < 16384) strong = 16384;
-    if (weak > 0 && weak < 8192) weak = 8192;
+    // Enforce minimum vibration floor so PWM motors actually move.
+    //
+    // Only meaningful for duty-cycle rendering, where too small a duty never
+    // moves the motor. In duration mode the bridge turns magnitude into pulse
+    // LENGTH and applies its own MIN_PULSE_MS floor, so clamping here would
+    // flatten every intensity from 1 to 64 onto the same 16384 and leave the
+    // bottom quarter of the slider doing nothing.
+    if (!mDurationMode) {
+        if (strong > 0 && strong < 16384) strong = 16384;
+        if (weak > 0 && weak < 8192) weak = 8192;
+    }
 
     VibrationMessage msg = {};
     msg.magic = VIBRATION_MAGIC;
@@ -437,6 +459,9 @@ void ForceFeedback::directPwmLoop(int onUs, int offUs, int totalMs) {
 }
 
 // PWM parameters matching the bridge path
+// Shortest pulse the motor renders as a distinct hit; matches MIN_PULSE_MS in
+// GammapadVibrationBridge so both paths bottom out identically.
+static constexpr uint32_t MIN_DIRECT_PULSE_MS = 12;
 static constexpr int DIRECT_PWM_PERIOD_US = 8000;  // 8ms
 static constexpr int DIRECT_PWM_STEADY_THRESHOLD = 60000;  // ~92% of 65535
 
@@ -450,11 +475,10 @@ void ForceFeedback::sendDirectFFVibration(uint16_t strong, uint16_t weak,
         return;
     }
 
-    // Apply intensity scaling
-    strong = static_cast<uint16_t>((static_cast<uint32_t>(strong) * mPwmIntensity) / 255);
-    weak = static_cast<uint16_t>((static_cast<uint32_t>(weak) * mPwmIntensity) / 255);
-
-    // Stop command
+    // Stop command. Tested against the magnitudes the caller asked for, before
+    // any intensity scaling: an intensity of 0 means "weakest", not "off". The
+    // Enable rumble switch is what turns rumble off, so scaling must never be
+    // able to synthesise a stop out of a real rumble request.
     if (durationMs == 0 || (strong == 0 && weak == 0)) {
         stopDirectPwm();
         struct input_event ev = {};
@@ -463,6 +487,50 @@ void ForceFeedback::sendDirectFFVibration(uint16_t strong, uint16_t weak,
         ev.value = 0;
         write(mDirectFFfd, &ev, sizeof(ev));
         LOG(INFO) << "Direct FF stop";
+        return;
+    }
+
+    strong = scaleMagnitude(strong, mPwmIntensity);
+    weak = scaleMagnitude(weak, mPwmIntensity);
+
+    // Duration mode: render intensity as pulse length, exactly as the bridge
+    // does. Driving the motor at 8ms duty (the PWM path below) is inaudible as
+    // a strength change on an ERM -- the mass averages it out -- which made
+    // selecting a direct FF device feel *weaker* than routing via the bridge.
+    if (mDurationMode) {
+        stopDirectPwm();
+
+        uint32_t mag = std::max(strong, weak);
+        uint32_t scaled = static_cast<uint32_t>(
+                (static_cast<uint64_t>(durationMs) * mag) / 65535);
+        if (scaled > durationMs) scaled = durationMs;
+        if (scaled < MIN_DIRECT_PULSE_MS) scaled = MIN_DIRECT_PULSE_MS;
+
+        struct ff_effect effect = {};
+        effect.type = FF_RUMBLE;
+        effect.id = mDirectFFEffectId;
+        // The motor is on/off, so magnitude is meaningless to the driver.
+        // Ask for full and let the length carry the intensity.
+        effect.u.rumble.strong_magnitude = 0xFFFF;
+        effect.u.rumble.weak_magnitude = 0xFFFF;
+        effect.replay.length = static_cast<uint16_t>(
+                scaled > 65535 ? 65535 : scaled);
+        effect.replay.delay = 0;
+
+        if (ioctl(mDirectFFfd, EVIOCSFF, &effect) < 0) {
+            LOG(WARNING) << "Direct FF effect update failed: " << strerror(errno);
+            closeDirectFF();
+            return;
+        }
+
+        struct input_event ev = {};
+        ev.type = EV_FF;
+        ev.code = static_cast<uint16_t>(mDirectFFEffectId);
+        ev.value = 1;
+        write(mDirectFFfd, &ev, sizeof(ev));
+
+        LOG(INFO) << "Direct FF duration: mag=" << mag
+                  << " duration=" << durationMs << " scaled=" << scaled;
         return;
     }
 

@@ -50,6 +50,14 @@ public class GammapadVibrationBridge extends SystemService {
     // Threshold above which we use steady vibration (no PWM needed)
     private static final int PWM_STEADY_THRESHOLD = 60000; // ~92% of 65535
 
+    // Rumble rendering mode. "duration" (default) scales pulse length; "pwm"
+    // restores the old duty-cycle behaviour. Property exists so the old path
+    // can be re-enabled at runtime without reflashing.
+    private static final String PROP_RUMBLE_MODE = "persist.gammaos.gamepad.rumble_mode";
+    // Shortest pulse that still registers as a distinct hit on this motor.
+    // Below roughly this the ERM never spins up enough to be felt at all.
+    private static final int MIN_PULSE_MS = 12;
+
     private final Context mContext;
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
     private Vibrator mVibrator;
@@ -279,6 +287,30 @@ public class GammapadVibrationBridge extends SystemService {
         if (magnitude <= 0) {
             stopPwm();
             cancelVibrator();
+            return;
+        }
+
+        // Duration-scaled intensity (default).
+        //
+        // The motor is a binary on/off ERM: the kernel driver discards the FF
+        // magnitude (sc27xx_vibra_play_work only tests it for zero/non-zero)
+        // and the vibrator HAL reports no CAP_AMPLITUDE_CONTROL, so amplitude
+        // cannot be varied at all. PWM was measured to be unusable at both
+        // ends of the range -- an 8 ms period sits below the motor's
+        // mechanical time constant and simply averages out to full strength,
+        // while 48-96 ms periods are felt as pulsing rather than as weaker.
+        // Pulse length is the only dimension that maps to perceived strength
+        // here, so scale the pulse instead of chopping it.
+        //
+        // Trade-off: a weak long rumble finishes early rather than running
+        // quietly for its full length. That is audible in sustained effects,
+        // but it is the only variation this hardware can actually render.
+        if (!"pwm".equals(SystemProperties.get(PROP_RUMBLE_MODE, "duration"))) {
+            stopPwm();
+            long scaled = (clampedDuration * magnitude) / 65535L;
+            if (scaled > clampedDuration) scaled = clampedDuration;
+            if (scaled < MIN_PULSE_MS) scaled = MIN_PULSE_MS;
+            vibrateOneShot(scaled, MAX_AMPLITUDE);
             return;
         }
 
