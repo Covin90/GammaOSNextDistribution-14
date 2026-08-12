@@ -285,6 +285,12 @@ PRODUCT_SYSTEM_DEFAULT_PROPERTIES += \
     persist.dbg.vt_avail_ovr=0 \
     persist.dbg.wfc_avail_ovr=0
 
+# WiFi framework tuning for the Unisoc WCN stack. Must be an RRO: the target
+# resources live in the com.android.wifi APEX and are <overlayable>, so a
+# source overlay cannot reach them. See rro_overlays/WifiOverlay/.
+PRODUCT_PACKAGES += \
+    TrebleWifiOverlay
+
 # Framework/UI overlays to hide telephony affordances
 PRODUCT_PACKAGE_OVERLAYS += \
     device/phh/treble/overlay-wifionly

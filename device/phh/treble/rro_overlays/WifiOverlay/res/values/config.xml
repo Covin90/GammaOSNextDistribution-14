@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     Values Anbernic stock applies via /vendor/overlay (Unisoc's
+     com.android.wifi.resources.uni_marlin3 RRO). GammaOS rebuilds vendor as
+     ext4 and drops /vendor/overlay entirely, so the framework silently falls
+     back to AOSP defaults.
+
+     Measured on an RG556 running Anbernic V1.16. See rg556-wifi-findings.md,
+     Appendix A.7.
+
+                                            Unisoc   AOSP default
+       enable_associated_network_selection    false     true
+       score_entry_rssi_threshold_24GHz        -70      -80
+       score_entry_rssi_threshold_5GHz         -66      -77
+
+     The first is the lead: with it true the framework keeps re-evaluating and
+     can switch away from a working association, regardless of screen state,
+     which matches the upstream report that WiFi drops both with the screen off
+     and with it on.
+
+     Unisoc also sets config_wifi_fast_bss_transition_enabled and
+     config_wifi_background_scan_support true (AOSP defaults both false).
+     Deliberately NOT included yet: changing one thing at a time keeps the
+     result interpretable.
+-->
+<resources>
+    <bool name="config_wifi_framework_enable_associated_network_selection">false</bool>
+    <integer name="config_wifi_framework_wifi_score_entry_rssi_threshold_24GHz">-70</integer>
+    <integer name="config_wifi_framework_wifi_score_entry_rssi_threshold_5GHz">-66</integer>
+</resources>

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.android.wifi.resources.treble">
+
+    <application android:hasCode="false" />
+
+    <!-- targetName must match <overlayable name="WifiCustomization"> in
+         packages/modules/Wifi/service/ServiceWifiResources/res/values/overlayable.xml.
+         Its policy is odm|product|system|vendor, and this overlay is
+         product_specific, so it installs to /product/overlay and qualifies.
+
+         isStatic keeps it always-on: a mutable RRO would ship disabled and need
+         `cmd overlay enable`, which is not something a flashed image can rely on. -->
+    <overlay
+        android:targetPackage="com.android.wifi.resources"
+        android:targetName="WifiCustomization"
+        android:isStatic="true"
+        android:priority="1" />
+</manifest>

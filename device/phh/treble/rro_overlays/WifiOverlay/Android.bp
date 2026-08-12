@@ -1,0 +1,16 @@
+// Restores the WiFi framework values Unisoc ships for the ums9620 (Mali/Marlin3)
+// WCN stack. See res/values/config.xml for the measurements behind each value.
+//
+// This has to be a runtime_resource_overlay, not a PRODUCT_PACKAGE_OVERLAYS
+// source overlay: ServiceWifiResources lives inside the com.android.wifi APEX,
+// and mainline module resources cannot be customised at build time. They are
+// declared <overlayable name="WifiCustomization"> precisely so that OEMs
+// override them with an RRO instead. Anbernic stock does exactly this, via
+// /vendor/overlay/AospWifiOverlay_Marlin3 (com.android.wifi.resources.uni_marlin3).
+
+runtime_resource_overlay {
+    name: "TrebleWifiOverlay",
+    resource_dirs: ["res"],
+    sdk_version: "current",
+    product_specific: true,
+}
